@@ -1,4 +1,4 @@
-var robot = require("robotjs");//TODO Fix Typing Speed Issue with Fork
+var robot = require("robotjs");
 var net = require('net');
 var fs = require('fs');
 Tail = require('tail').Tail;
@@ -7,7 +7,6 @@ var gameStateInit;
 var gameState;
 var client = new net.Socket();
 const config = ini.parse(fs.readFileSync('./config.ini', 'utf-8'));
-//const degreeType = config.degreeType;
 
 tailInit();//Initial tail to get latest gameState
 
@@ -32,7 +31,7 @@ function tailMain() {
   tail = new Tail(filePath, options);
   //Begin Tail
   tail.on("line", function (data) {
-    
+
     //If at main menu, and previous location was NOT in-game, prepare window, enter bot mode, and continue game.
     if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState != "In Game") {
       console.log("State Change: " + gameState + " -> " + "In Main Menu");
@@ -42,8 +41,8 @@ function tailMain() {
       //tcpServer();
       continueGameInit();
 
-    } 
-    
+    }
+
     //If at main menu, and previous location WAS in-game, prepare window, and continue game.
     else if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState == "In Game") {
       console.log("State Change: " + gameState + " -> " + "In Main Menu");
@@ -67,7 +66,7 @@ function tailMain() {
       //     console.log ("Did not connect to game server, retrying.");
       //     continueGame(); 
       //   }, 30000);
-        
+
 
       // }
 
@@ -78,10 +77,10 @@ function tailMain() {
       destroyConnection();
       //Close TCP Server
 
-    } else if (data.includes("LogSCUM: APrisoner::HandlePossessedBy:")) { 
+    } else if (data.includes("LogSCUM: APrisoner::HandlePossessedBy:")) {
       console.log("State Change: " + gameState + " -> " + "In Game");
       gameState = "In Game";
-      console.log ("Should be In Game: " + gameState);
+      console.log("Should be In Game: " + gameState);
       console.log("-> Running 'In Game' Tasks");
       //Wait 5 seconds, then send "T" to open chat window.
       setTimeout(() => {
@@ -95,50 +94,40 @@ function tailMain() {
 }
 
 setTimeout(() => {
-gameState = gameStateInit;
-tailMain();
-console.log("Game Init State: " + gameState);
+  gameState = gameStateInit;
+  tailMain();
+  console.log("Game Init State: " + gameState);
 
-//Now run initial tasks
-if (gameState == "In Main Menu") {
-  console.log("-> Running Initial 'Start' Tasks");
-  prepareWindow();
-  continueGameInit();
-} else if (gameState == "Closed" || "Undefined") {
-  console.log("-> Running Initial 'Closed' Tasks");
-  testExternalApp();
-  //Start Game
-} else if (gameState == "In-Game") {
-  console.log("-> Running Initial 'In-Game' Tasks");
-  //Wait 5 seconds, then send "T" to open chat window.
-  setTimeout(() => {
-    robot.keyTap("t");
-    robot.typeString("SCUMmunity Bot Initializing...");
-    robot.keyTap("enter");
-  }, 5000);
-  tcpServer();
-  //Ready for commands
-  
-}
+  //Now run initial tasks
+  if (gameState == "In Main Menu") {
+    console.log("-> Running Initial 'Start' Tasks");
+    prepareWindow();
+    continueGameInit();
+  } else if (gameState == "Closed" || "Undefined") {
+    console.log("-> Running Initial 'Closed' Tasks");
+    testExternalApp();
+    //Start Game
+  } else if (gameState == "In-Game") {
+    console.log("-> Running Initial 'In-Game' Tasks");
+    //Wait 5 seconds, then send "T" to open chat window.
+    setTimeout(() => {
+      robot.keyTap("t");
+      robot.typeString("SCUMmunity Bot Initializing...");
+      robot.keyTap("enter");
+    }, 5000);
+    tcpServer();
+    //Ready for commands
+
+  }
 }, 5000);
 
-
-
 function tcpServer() {
-
-  //var client = new net.Socket();
-  client.connect(config.NodeRedTCPPort, config.NodeRedTCPHost, function() {
+  client.connect(config.NodeRedTCPPort, config.NodeRedTCPHost, function () {
     console.log('Connected');
     client.write('Hello, server! Love, Client.');
   });
   client.on('data', onConnData);
-  
-  // client.on('data', function(data) {
-  //   console.log('Received: ' + data);
-  
-  // });
-  
-  client.on('close', function() {
+  client.on('close', function () {
     console.log('Connection closed');
   });
 }
@@ -169,7 +158,7 @@ function onConnData(d) {
   }
 }
 
-function destroyConnection(){
+function destroyConnection() {
   client.destroy();
 }
 
@@ -206,7 +195,7 @@ function prepareWindow() {
 
 
     // get active window
-    //for scum, note the spaces in "SCUM  ". Took me a whole fucking day to figure out why just "SCUM" wasn't being found...
+    //for scum, note the spaces in "SCUM  ". Took me a whole damn day to figure out why just "SCUM" wasn't being found...
     const scumWindow = user32.FindWindowA(null, "SCUM  ");
 
     console.log("Active Window: " + scumWindow);
@@ -234,66 +223,66 @@ function continueGameInit() {
   setTimeout(() => {
     robot.moveMouse(387, 270);
     robot.mouseClick();
-  setTimeout(() => {
-    robot.moveMouse(104, 150);
-    robot.mouseClick();
     setTimeout(() => {
-      robot.keyTap("d", "control");
+      robot.moveMouse(104, 150);
+      robot.mouseClick();
       setTimeout(() => {
-        robot.moveMouse(104, 301);
+        robot.keyTap("d", "control");
         setTimeout(() => {
-          robot.mouseClick();
-        }, 1000);
+          robot.moveMouse(104, 301);
+          setTimeout(() => {
+            robot.mouseClick();
+          }, 1000);
+        }, 3000);
       }, 3000);
-    }, 3000);
+    }, 5000);
   }, 5000);
-}, 5000);
 }
 
 function continueGame() {
   setTimeout(() => {
-  robot.moveMouse(387, 270);
-  robot.mouseClick();
-  setTimeout(() => {
-    robot.moveMouse(104, 150);
+    robot.moveMouse(387, 270);
     robot.mouseClick();
+    setTimeout(() => {
+      robot.moveMouse(104, 150);
+      robot.mouseClick();
       setTimeout(() => {
         robot.moveMouse(104, 301);
         setTimeout(() => {
           robot.mouseClick();
         }, 1000);
       }, 3000);
+    }, 5000);
   }, 5000);
-}, 5000);
 }
 
-function testExternalApp(){
+function testExternalApp() {
   //////////////////////////////////
-      
-      // http://stackoverflow.com/questions/18183882/node-webkit-how-to-execute-an-exe-file
-      // https://github.com/rogerwang/node-webkit/wiki/Clipboard
-  
-      var execFile = require('child_process').execFile, child;
-       child = execFile('G:\\SteamLibrary\\steamapps\\common\\SCUM\\SCUM_Launcher.exe', function(error,stdout,stderr) { //Find way to launch relative to user
-          if (error) {
-            //console.log(error.stack); 
-            //console.log('Error code: '+ error.code); 
-            //console.log('Signal received: '+ 
-            //       error.signal);
-            }
-            //console.log('Child Process stdout: '+ stdout);
-            //console.log('Child Process stderr: '+ stderr);
-        }); 
-        child.on('exit', function (code) { 
-          //console.log('Child process exited '+
-          //    'with exit code '+ code);
-          //alert('exit');
-          // Load native UI library
-          var gui = require('nw.gui');
-          var clipboard = gui.Clipboard.get();
-          var text = clipboard.get('text');
-          alert(text);
 
-        });
-      ///////////////////////////////////
+  // http://stackoverflow.com/questions/18183882/node-webkit-how-to-execute-an-exe-file
+  // https://github.com/rogerwang/node-webkit/wiki/Clipboard
+
+  var execFile = require('child_process').execFile, child;
+  child = execFile('G:\\SteamLibrary\\steamapps\\common\\SCUM\\SCUM_Launcher.exe', function (error, stdout, stderr) { //Find way to launch relative to user
+    if (error) {
+      //console.log(error.stack); 
+      //console.log('Error code: '+ error.code); 
+      //console.log('Signal received: '+ 
+      //       error.signal);
+    }
+    //console.log('Child Process stdout: '+ stdout);
+    //console.log('Child Process stderr: '+ stderr);
+  });
+  child.on('exit', function (code) {
+    //console.log('Child process exited '+
+    //    'with exit code '+ code);
+    //alert('exit');
+    // Load native UI library
+    var gui = require('nw.gui');
+    var clipboard = gui.Clipboard.get();
+    var text = clipboard.get('text');
+    alert(text);
+
+  });
+  ///////////////////////////////////
 };
