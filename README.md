@@ -1,2 +1,0 @@
-# SCUMmunityBotClient
-SCUMmunityBotClient

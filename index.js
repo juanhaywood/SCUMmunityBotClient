@@ -3,286 +3,343 @@ var net = require('net');
 var fs = require('fs');
 Tail = require('tail').Tail;
 var ini = require('ini');
-var gameStateInit;
-var gameState;
-var client = new net.Socket();
+var opn = require('opn');
+var exec = require('child_process').exec;
+const ffi = require('ffi-napi');
+const clipboardy = require('clipboardy');
+const { Console } = require("console");
+var fsR = require('fs-reverse'), filePath = process.env.LOCALAPPDATA + '\\SCUM\\Saved\\Logs\\SCUM.log';
+
 const config = ini.parse(fs.readFileSync('./config.ini', 'utf-8'));
 
-tailInit();//Initial tail to get latest gameState
+// create the server
+let server = net.createServer(connection => {
+    // run all of this when a client connects
+    console.log("new connection");
+
+    connection.on("data", data => {
+        // run this when data is received
+        if (data == undefined || data == null) {
+            return;
+        }
+        const d = JSON.parse(data);
+
+        if (d.length === 0) { // in case there is no command
+            connection.write("ERROR no data");
+            return; // prevents other code from running
+        }
+        const type = d.type; // gets the command
+
+        switch (d.type) {
+            case "moveMouse":
+                robot.moveMouse(d.args.x, d.args.y);
+                return;
+            case "getMousePos":
+                var mouse = robot.getMousePos();
+                console.log("Mouse is at x:" + mouse.x + " y:" + mouse.y);
+                return;
+            case "typeString":
+                robot.moveMouse(60, 240);
+                robot.mouseClick();
+                robot.mouseClick();
+                robot.typeString(d.args);
+                robot.keyTap("enter");
+                return;
+            case "keyTap":
+                robot.keyTap(d.args);
+                return;
+            case "fetchReturn":
+                //fetchReturn(d.args[0].command);
+
+                const myPromise = new Promise((resolve, reject) => {
+                    prepareWindow();
+                    resolve();
+                });
+
+                myPromise.then(function () {
+                    clipboardy.writeSync("Not copied yet");
+                    var output = clipboardy.readSync();
+                    console.log("Clipboard set to " + output);
+                    var results = "";
+                    var test = 0;
+                    setTimeout(() => {
+                        robot.moveMouse(60, 240);
+                        robot.mouseClick();
+                        robot.mouseClick();
+                        robot.typeString(d.args[0].command);
+                        robot.keyTap("enter");
+                        console.log("Sent command to game: " + d.args[0].command);
+                        if (output == "Not copied yet") {
+                            console.log("Results not ready. Waiting to receive results");
+                            while (output == "Not copied yet") {
+                                test++;
+                                output = clipboardy.readSync();
+                                if (output != "Not copied yet") {
+                                    console.log("Copied command results to clipboard. While loop = " + test);
+                                    results = output.replace(/(?:\r\n|\r|\n)/g, '\\n');
+                                    var payload = '{ "command":"' + d.args[0].command + '", "steamID":"' + d.args[0].steamID + '", "results":"' + results + '" }';
+                                    tcpClient(payload);
+                                }
+                            }
+                        } else {
+                            console.log("Immediately had results");
+                            results = output.replace(/(?:\r\n|\r|\n)/g, '\\n');
+                            var payload = '{ "command":"' + d.args[0].command + '", "steamID":"' + d.args[0].steamID + '", "results":"' + results + '" }';
+                            tcpClient(payload);
+                        }
+                    }, 1000);
+                }, function () {
+                    console.log("Promise Failed");
+                });
+                return;
+            default:
+                connection.write("ERROR invalid command");
+                return;
+        }
+    });
+});
+
+// look for a connection on config.ini:TCPServerPort
+server.listen(config.TCPServerPort, () => {
+    console.log("waiting for a connection"); // prints on start
+    isSCUMRunning();
+});
+
+function isSCUMRunning() {
+    const isRunning = (query, cb) => {
+        let platform = process.platform;
+        let cmd = '';
+        switch (platform) {
+            case 'win32': cmd = `tasklist`; break;
+            case 'darwin': cmd = `ps -ax | grep ${query}`; break;
+            case 'linux': cmd = `ps -A`; break;
+            default: break;
+        }
+        exec(cmd, (err, stdout, stderr) => {
+            cb(stdout.toLowerCase().indexOf(query.toLowerCase()) > -1);
+        });
+    }
+    isRunning('scum.exe', (status) => {
+        console.log("Game Running?: " + status); // true|false
+        if (status != true) {
+            gameStateInit = "Closed";
+            initialTasks();
+        } else {
+            tailInit();//Initial tail to get latest gameState
+        }
+    })
+}
 
 function tailInit() {
-  const filePath = process.env.LOCALAPPDATA + '\\SCUM\\Saved\\Logs\\SCUM.log';
-  var options = { fromBeginning: true };//if bot client is closed and reopened, it can get latest state from log file
-  tail = new Tail(filePath, options);
-  //Begin Tail
-  tail.on("line", function (data) {
+    var logs = fsR(filePath, {});
 
-    if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'")) {
-      gameStateInit = "In Main Menu";
-    } else if (data.includes("LogExit: Exiting") || data.includes("LogExit: Executing StaticShutdownAfterError")) {
-      gameStateInit = "Closed";
+    logs.on('data', function listener(line) {
+        if (line.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'")) {
+            gameStateInit = "In Main Menu";
+            logs.removeListener('data', listener);
+            initialTasks();
+        } else if (line.includes("' logged in") && !line.includes("LogSCUM: User '")) {
+            gameStateInit = "In Game";
+            logs.removeListener('data', listener);
+            initialTasks();
+        }
+        // else {
+        //     console.log("Unable to find game initial state in logs.")
+        // }
+    });
+}
+
+function initialTasks() {
+    gameState = gameStateInit;
+
+    console.log("Game Init State: " + gameState);
+
+    //Now run initial tasks //Look into using "switch" instead //Need to handle undefined state
+    if (gameState == "In Main Menu") {
+        console.log("-> Running Initial 'Start' Tasks");
+        prepareWindow();
+        continueGameInit();
+        tailMain();
+    } else if (gameState == "Closed") {
+        console.log("-> Running Initial 'Closed' Tasks");
+        tailMain();
+        opn('steam://rungameid/513710');
+    } else if (gameState == "In Game") {
+        console.log("-> Running Initial 'In Game' Tasks");
+        prepareWindow();
+        setTimeout(() => {
+            robot.moveMouse(60, 240);
+            robot.mouseClick();
+            robot.mouseClick();
+            robot.keyTap("t");
+            robot.keyTap("backspace");
+            robot.typeString("SCUMmunity Bot Initializing...");
+            robot.keyTap("enter");
+        }, 5000);
+        tailMain();
     }
-  });
 }
 
-function tailMain() {
-  const filePath = process.env.LOCALAPPDATA + '\\SCUM\\Saved\\Logs\\SCUM.log';
-  var options = { fromBeginning: false };
-  tail = new Tail(filePath, options);
-  //Begin Tail
-  tail.on("line", function (data) {
+function tailMain() {//review to improve code
+    console.log("Tailing SCUM.log file and updating game states.");
+    const filePath = process.env.LOCALAPPDATA + '\\SCUM\\Saved\\Logs\\SCUM.log';
+    var options = { fromBeginning: false };
+    tail = new Tail(filePath, options);
+    //Begin Tail
+    tail.on("line", function (data) {
 
-    //If at main menu, and previous location was NOT in-game, prepare window, enter bot mode, and continue game.
-    if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState != "In Game") {
-      console.log("State Change: " + gameState + " -> " + "In Main Menu");
-      gameState = "In Main Menu";
-      console.log("-> Running 'Start' Tasks");
-      prepareWindow();
-      //tcpServer();
-      continueGameInit();
-
-    }
-
-    //If at main menu, and previous location WAS in-game, prepare window, and continue game.
-    else if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState == "In Game") {
-      console.log("State Change: " + gameState + " -> " + "In Main Menu");
-      gameState = "In Main Menu";
-      console.log("-> Running 'Resume' Tasks");
-      prepareWindow();
-      destroyConnection();
-      //tcpServerEnd();
-      continueGame();
-      //need to do check to see if succesfully change, i.e. when server is down. If not, wait 10 secs then retry.
-
-      // do {
-      //   console.log ("Retry test");
-      //   continueGame();
-      //   setTimeout('', 30000);
-      // }
-      // while (gameState != "In Game");
-
-      // while (gameState != "In Game"){
-      //   setTimeout(() => {
-      //     console.log ("Did not connect to game server, retrying.");
-      //     continueGame(); 
-      //   }, 30000);
-
-
-      // }
-
-    } else if (data.includes("LogExit: Exiting") || data.includes("LogExit: Executing StaticShutdownAfterError")) {
-      console.log("State Change: " + gameState + " -> " + "Closed");
-      gameState = "Closed";
-      console.log("-> Running 'Closed' Tasks");
-      destroyConnection();
-      //Close TCP Server
-
-    } else if (data.includes("LogSCUM: APrisoner::HandlePossessedBy:")) {
-      console.log("State Change: " + gameState + " -> " + "In Game");
-      gameState = "In Game";
-      console.log("Should be In Game: " + gameState);
-      console.log("-> Running 'In Game' Tasks");
-      //Wait 5 seconds, then send "T" to open chat window.
-      setTimeout(() => {
-        robot.keyTap("t");
-        robot.typeString("SCUMmunity Bot Initializing...");
-        robot.keyTap("enter");
-      }, 5000);
-      tcpServer();
-    }
-  });
+        //If at main menu, and previous location was NOT in-game, prepare window, enter bot mode, and continue game.
+        if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState == "In Main Menu") {
+            console.log("Still In Main Menu. Retrying connection...");
+            gameState = "In Main Menu";
+            tcpClient(gameState);
+            console.log("-> Running 'Resume' Tasks");
+            continueGame();
+            //need to do check to see if succesfully change, i.e. when server is down. If not, wait 10 secs then retry.
+        } else if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState != "In Game") {
+            console.log("State Change: " + gameState + " -> " + "In Main Menu");
+            gameState = "In Main Menu";
+            tcpClient(gameState);
+            console.log("-> Running 'Start' Tasks");
+            continueGameInit();
+        }
+        //If at main menu, and previous location WAS in-game, prepare window, and continue game.
+        else if (data.includes("LogLoad: Game class is 'BP_MainMenuGameMode_C'") && gameState == "In Game") {
+            console.log("State Change: " + gameState + " -> " + "In Main Menu");
+            gameState = "In Main Menu";
+            tcpClient(gameState);
+            console.log("-> Running 'Resume' Tasks");
+            continueGame();
+            //need to do check to see if succesfully change, i.e. when server is down. If not, wait 10 secs then retry.
+        } else if (data.includes("LogExit: Exiting") || data.includes("LogExit: Executing StaticShutdownAfterError")) {
+            console.log("State Change: " + gameState + " -> " + "Closed");
+            gameState = "Closed";
+            tcpClient(gameState);
+            console.log("-> Running 'Closed' Tasks");
+            setTimeout(() => {
+                opn('steam://rungameid/513710');
+            }, 30000);
+        } else if (data.includes("' logged in") && !data.includes("LogSCUM: User '")) {
+            console.log("State Change: " + gameState + " -> " + "In Game");
+            gameState = "In Game";
+            tcpClient(gameState);
+            console.log("Should be In Game: " + gameState);
+            console.log("-> Running 'In Game' Tasks");
+            prepareWindow();
+            //Wait 30 seconds, then send "T" to open chat window.
+            setTimeout(() => {
+                robot.keyTap("t");
+                robot.keyTap("backspace");
+                robot.typeString("SCUMmunity Bot Initializing...");
+                robot.keyTap("enter");
+            }, 30000);
+        }
+    });
 }
 
-setTimeout(() => {
-  gameState = gameStateInit;
-  tailMain();
-  console.log("Game Init State: " + gameState);
+function tcpClient(d) {
+    var client = new net.Socket();
+    client.connect(config.TCPClientPort, config.NodeRedTCPHost, function () {
 
-  //Now run initial tasks
-  if (gameState == "In Main Menu") {
-    console.log("-> Running Initial 'Start' Tasks");
-    prepareWindow();
-    continueGameInit();
-  } else if (gameState == "Closed" || "Undefined") {
-    console.log("-> Running Initial 'Closed' Tasks");
-    testExternalApp();
-    //Start Game
-  } else if (gameState == "In-Game") {
-    console.log("-> Running Initial 'In-Game' Tasks");
-    //Wait 5 seconds, then send "T" to open chat window.
-    setTimeout(() => {
-      robot.keyTap("t");
-      robot.typeString("SCUMmunity Bot Initializing...");
-      robot.keyTap("enter");
-    }, 5000);
-    tcpServer();
-    //Ready for commands
-
-  }
-}, 5000);
-
-function tcpServer() {
-  client.connect(config.NodeRedTCPPort, config.NodeRedTCPHost, function () {
-    console.log('Connected');
-    client.write('Hello, server! Love, Client.');
-  });
-  client.on('data', onConnData);
-  client.on('close', function () {
-    console.log('Connection closed');
-  });
-}
-//SCUM chat default input pos is x:60 y:240
-function onConnData(d) {
-  console.log('connection data : ', d);
-  const robotPayload = JSON.parse(d);
-  switch (robotPayload.type) {
-    case "moveMouse":
-      robot.moveMouse(robotPayload.args.x, robotPayload.args.y);
-      break;
-    case "getMousePos":
-      var mouse = robot.getMousePos();
-      console.log("Mouse is at x:" + mouse.x + " y:" + mouse.y);
-      break;
-    case "typeString":
-      robot.moveMouse(60, 240);
-      robot.mouseClick();
-      robot.typeString(robotPayload.args);
-      robot.keyTap("enter");
-      break;
-    case "keyTap":
-      robot.keyTap(robotPayload.args);
-      break;
-    default:
-      console.log("I have never heard of that fruit...");
-      console.log(robotPayload);
-  }
-}
-
-function destroyConnection() {
-  client.destroy();
-}
-
-
-function prepareWindow() {
-  const ffi = require('ffi-napi');
-  setTimeout(() => {
-    // create foreign function
-    const user32 = new ffi.Library('user32', {
-      'FindWindowA': ['long', ['string', 'string']],
-      'ShowWindow': ['bool', ['long', 'int']],
-      'GetWindowRect': ['bool', ['long', 'pointer']],
-      'SetWindowPos': ['bool', ['long', 'long', 'int', 'int', 'int', 'int', 'uint']]
     });
 
-    // create rectangle from pointer
-    const pointerToRect = function (rectPointer) {
-      const rect = {};
-      rect.left = rectPointer.readInt16LE(0);
-      rect.top = rectPointer.readInt16LE(4);
-      rect.right = rectPointer.readInt16LE(8);
-      rect.bottom = rectPointer.readInt16LE(12);
-      return rect;
-    }
+    client.on('connect', function () {
+        console.log('Send Client: connection established with server');
+    });
 
-    // obtain window dimension
-    const getWindowDimensions = function (handle) {
-      const rectPointer = Buffer.alloc(16);
-      const getWindowRect = user32.GetWindowRect(handle, rectPointer);
-      return !getWindowRect
-        ? null
-        : pointerToRect(rectPointer);
-    }
+    client.setEncoding('utf8');
 
+    client.on('data', function (data) {
+        console.log('Data from server:' + data);
+    });
+    client.end(d);
 
-    // get active window
-    //for scum, note the spaces in "SCUM  ". Took me a whole damn day to figure out why just "SCUM" wasn't being found...
-    const scumWindow = user32.FindWindowA(null, "SCUM  ");
-
-    console.log("Active Window: " + scumWindow);
-    // get window dimension
-    const scumWindowDimensions = getWindowDimensions(scumWindow);
-
-    // force active window to restore mode
-    user32.ShowWindow(scumWindow, 9);
-
-    // set window position and size
-    user32.SetWindowPos(
-      scumWindow,
-      0,
-      -1,
-      -1,
-      800,
-      500,
-      0x4000 | 0x0020 | 0x0020 | 0x0040
-    );
-
-  }, 5000);
+    client.on("end", () => { // close everything when done
+        console.log("disconnected");
+    })
 }
 
-function continueGameInit() {
-  setTimeout(() => {
-    robot.moveMouse(387, 270);
-    robot.mouseClick();
-    setTimeout(() => {
-      robot.moveMouse(104, 150);
-      robot.mouseClick();
-      setTimeout(() => {
-        robot.keyTap("d", "control");
-        setTimeout(() => {
-          robot.moveMouse(104, 301);
-          setTimeout(() => {
-            robot.mouseClick();
-          }, 1000);
-        }, 3000);
-      }, 3000);
-    }, 5000);
-  }, 5000);
+function prepareWindow() {
+    // create foreign function
+    const user32 = new ffi.Library('user32', {
+        'GetTopWindow': ['long', ['long']],
+        'FindWindowA': ['long', ['string', 'string']],
+        'SetActiveWindow': ['long', ['long']],
+        'SetForegroundWindow': ['bool', ['long']],
+        'BringWindowToTop': ['bool', ['long']],
+        'ShowWindow': ['bool', ['long', 'int']],
+        'SwitchToThisWindow': ['void', ['long', 'bool']],
+        'GetForegroundWindow': ['long', []],
+        'AttachThreadInput': ['bool', ['int', 'long', 'bool']],
+        'GetWindowThreadProcessId': ['int', ['long', 'int']],
+        'SetWindowPos': ['bool', ['long', 'long', 'int', 'int', 'int', 'int', 'uint']],
+        'SetFocus': ['long', ['long']]
+    });
+
+    var kernel32 = new ffi.Library('Kernel32.dll', {
+        'GetCurrentThreadId': ['int', []]
+    });
+
+    var scumWindow = user32.FindWindowA(null, "SCUM  ");
+    var foregroundHWnd = user32.GetForegroundWindow();
+    var currentThreadId = kernel32.GetCurrentThreadId();
+    var windowThreadProcessId = user32.GetWindowThreadProcessId(foregroundHWnd, null);
+    var showWindow = user32.ShowWindow(scumWindow, 9);
+    var setWindowPos = user32.SetWindowPos(scumWindow, 0, -1, -1, 800, 500, 0x4000 | 0x0020 | 0x0020 | 0x0040);
+    //var setWindowPos2 = user32.SetWindowPos(scumWindow, -2, 0, 0, 0, 0, 3);
+    var setForegroundWindow = user32.SetForegroundWindow(scumWindow);
+    var attachThreadInput = user32.AttachThreadInput(windowThreadProcessId, currentThreadId, 0);
+    var setFocus = user32.SetFocus(scumWindow);
+    var setActiveWindow = user32.SetActiveWindow(scumWindow);
+
+    console.log("Scum Window Position and Size set.");
 }
 
 function continueGame() {
-  setTimeout(() => {
-    robot.moveMouse(387, 270);
-    robot.mouseClick();
-    setTimeout(() => {
-      robot.moveMouse(104, 150);
-      robot.mouseClick();
-      setTimeout(() => {
-        robot.moveMouse(104, 301);
+    const myPromise = new Promise((resolve, reject) => {
+        prepareWindow();
+        resolve();
+    });
+    myPromise.then(function () {
         setTimeout(() => {
-          robot.mouseClick();
-        }, 1000);
-      }, 3000);
-    }, 5000);
-  }, 5000);
+            robot.moveMouse(387, 270);
+            robot.mouseClick();
+            robot.mouseClick();
+            setTimeout(() => {
+                robot.moveMouse(104, 301);
+                setTimeout(() => {
+                    robot.mouseClick();
+                    robot.mouseClick();
+                }, 1000);
+            }, 1000);
+        }, 3000);
+    }, function () {
+        console.log("Promise Failed");
+    });
 }
 
-function testExternalApp() {
-  //////////////////////////////////
-
-  // http://stackoverflow.com/questions/18183882/node-webkit-how-to-execute-an-exe-file
-  // https://github.com/rogerwang/node-webkit/wiki/Clipboard
-
-  var execFile = require('child_process').execFile, child;
-  child = execFile('G:\\SteamLibrary\\steamapps\\common\\SCUM\\SCUM_Launcher.exe', function (error, stdout, stderr) { //Find way to launch relative to user
-    if (error) {
-      //console.log(error.stack); 
-      //console.log('Error code: '+ error.code); 
-      //console.log('Signal received: '+ 
-      //       error.signal);
-    }
-    //console.log('Child Process stdout: '+ stdout);
-    //console.log('Child Process stderr: '+ stderr);
-  });
-  child.on('exit', function (code) {
-    //console.log('Child process exited '+
-    //    'with exit code '+ code);
-    //alert('exit');
-    // Load native UI library
-    var gui = require('nw.gui');
-    var clipboard = gui.Clipboard.get();
-    var text = clipboard.get('text');
-    alert(text);
-
-  });
-  ///////////////////////////////////
-};
+function continueGameInit() {
+    const myPromise = new Promise((resolve, reject) => {
+        prepareWindow();
+        resolve();
+    });
+    myPromise.then(function () {
+        setTimeout(() => {
+            robot.moveMouse(387, 270);
+            robot.mouseClick();
+            robot.mouseClick();
+            setTimeout(() => {
+                robot.keyTap("d", "control");
+                setTimeout(() => {
+                    robot.moveMouse(104, 301);
+                    setTimeout(() => {
+                        robot.mouseClick();
+                        robot.mouseClick();
+                    }, 1000);
+                }, 1000);
+            }, 1000);
+        }, 3000);
+    }, function () {
+        console.log("Promise Failed");
+    });
+}

@@ -9,9 +9,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "clipboardy": "^2.3.0",
     "ffi-napi": "^4.0.3",
+    "fs-reverse": "0.0.3",
     "ini": "^2.0.0",
-    "robotjs": "git+https://github.com/tillbaks/robotjs.git",
+    "opn": "^6.0.0",
+    "pkg": "^5.3.2",
+    "robotjs": "git+https://github.com/octalmage/robotjs.git",
     "tail": "^2.2.3"
   }
 }
